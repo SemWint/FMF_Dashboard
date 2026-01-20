@@ -13,30 +13,132 @@ import { useNavigate } from 'react-router-dom';
 function Dashboard() {
     const navigate = useNavigate();
     const [range, setRange] = useState({ startMinutes: 8 * 60, endMinutes: 18 * 60 });
-    const [locationData, setLocationData] = useState([]);
+    const [allLocationData, setAllLocationData] = useState([]); // Store all CSV data
+    const [filteredLocationData, setFilteredLocationData] = useState([]); // Filtered data for display
     const [date, setDate] = useState("2026-01-19");
 
+    // Load CSV data on mount
     useEffect(() => {
-        // Fetch CSV file from your assets or API
-        fetch('../../data/output.csv') // or import it: import csvFile from '../assets/data.csv'
-        .then(response => response.text())
-        .then(csvText => {
-            Papa.parse(csvText, {
-            header: true,
-            dynamicTyping: true,
-            skipEmptyLines: true,
-            complete: (results) => {
-                const data = results.data.map(row => ({
-                latitude: row.lat,
-                longitude: row.lng,
-                intensity: row.intensity || 0.1
-                }));
-                setLocationData(data);
-            }
-            });
-        })
-        .catch(error => console.error('Error loading CSV:', error));
+        fetch('../../data/output.csv')
+            .then(response => response.text())
+            .then(csvText => {
+                Papa.parse(csvText, {
+                    header: true,
+                    dynamicTyping: true,
+                    skipEmptyLines: true,
+                    complete: (results) => {
+                        setAllLocationData(results.data);
+                    }
+                });
+            })
+            .catch(error => console.error('Error loading CSV:', error));
     }, []);
+
+    // Filter data whenever date or time range changes
+    useEffect(() => {
+        if (allLocationData.length === 0) return;
+
+        const filtered = allLocationData.filter(row => {
+            // Parse the timestamp from the CSV
+            // Assuming format: "2024-01-19 10:20:00" or similar
+            const timestampStr = row.timestamp || row.Timestamp || row.time;
+            if (!timestampStr) return false;
+            
+            const timestamp = new Date(timestampStr);
+            
+            // Check if date matches
+            const rowDate = timestamp.toISOString().split('T')[0];
+            if (rowDate !== date) return false;
+
+            // Check if time is within range
+            const rowMinutes = timestamp.getHours() * 60 + timestamp.getMinutes();
+            if (rowMinutes < range.startMinutes || rowMinutes > range.endMinutes) return false;
+
+            return true;
+        });
+
+        // Convert to heatmap format
+        const heatmapData = filtered.map(row => ({
+            latitude: row.lat || row.latitude,
+            longitude: row.lng || row.longitude || row.lon,
+            intensity: row.intensity || 0.1
+        }));
+
+        setFilteredLocationData(heatmapData);
+    }, [allLocationData, date, range]);
+
+    // Generate time data from CSV for arrivals
+    const getTimeData = () => {
+        if (allLocationData.length === 0) return [];
+
+        // Group arrivals by unique ID and their first timestamp for the selected date
+        const arrivals = {};
+        
+        allLocationData.forEach(row => {
+            const timestampStr = row.timestamp || row.Timestamp || row.time;
+            if (!timestampStr) return;
+            
+            const timestamp = new Date(timestampStr);
+            const rowDate = timestamp.toISOString().split('T')[0];
+            
+            // Only include data for selected date
+            if (rowDate === date) {
+                const id = row.id || row.ID;
+                const timeStr = `${timestamp.getHours().toString().padStart(2, '0')}:${timestamp.getMinutes().toString().padStart(2, '0')}`;
+                
+                // Track first arrival time for each ID
+                if (!arrivals[id] || new Date(arrivals[id].fullTimestamp) > timestamp) {
+                    arrivals[id] = {
+                        time: timeStr,
+                        day: rowDate,
+                        fullTimestamp: timestampStr
+                    };
+                }
+            }
+        });
+
+        // Convert to array format
+        return Object.values(arrivals).map(arrival => ({
+            time: arrival.time,
+            day: arrival.day
+        }));
+    };
+
+    // Calculate statistics from filtered data
+    const getStats = () => {
+        // Get unique IDs within the time range
+        const uniqueIds = new Set();
+        
+        allLocationData.forEach(row => {
+            const timestampStr = row.timestamp || row.Timestamp || row.time;
+            if (!timestampStr) return;
+            
+            const timestamp = new Date(timestampStr);
+            const rowDate = timestamp.toISOString().split('T')[0];
+            const rowMinutes = timestamp.getHours() * 60 + timestamp.getMinutes();
+            
+            if (rowDate === date && 
+                rowMinutes >= range.startMinutes && 
+                rowMinutes <= range.endMinutes) {
+                const id = row.id || row.ID;
+                if (id) uniqueIds.add(id);
+            }
+        });
+
+        const totalAttendees = uniqueIds.size || filteredLocationData.length;
+
+        return {
+            totalAttendees: totalAttendees,
+            // These would need actual data fields in your CSV
+            // For now using proportions
+            female: Math.floor(totalAttendees * 0.4),
+            male: Math.floor(totalAttendees * 0.54),
+            other: Math.floor(totalAttendees * 0.06)
+        };
+    };
+
+    const stats = getStats();
+    const timeData = getTimeData();
 
     return (
         <>
@@ -51,7 +153,7 @@ function Dashboard() {
                         imageUrl={festivalMap}
                         imageWidth={1200}
                         imageHeight={800}
-                        data={locationData}
+                        data={filteredLocationData}
                         imageBounds={{
                             north: 52.1354,
                             south: 52.1325,
@@ -65,11 +167,11 @@ function Dashboard() {
                         showControls={false}
                     />
                     <TimeRangeSlider
-                            label="Select Time Range"
-                            stepMinutes={15}
-                            value={range}
-                            onChange={setRange}
-                            format="24h"
+                        label="Select Time Range"
+                        stepMinutes={15}
+                        value={range}
+                        onChange={setRange}
+                        format="24h"
                     />
                     <DatePickerCustom
                         label="Select a date"
@@ -81,553 +183,20 @@ function Dashboard() {
                     />
                 </div>
                 <div className={styles.horizontalContainer}>
-                    <SimpleNumberWidget title="Total Attendees" number={1250} trend="up" />
-                    <SimpleNumberWidget title="Female" number={497} trend="neutral" />
-                    <SimpleNumberWidget title="Male" number={678} trend="up" />
-                    <SimpleNumberWidget title="Other" number={75} trend="down" />
+                    <SimpleNumberWidget title="Total Attendees" number={stats.totalAttendees} trend="up" />
+                    <SimpleNumberWidget title="Female" number={stats.female} trend="neutral" />
+                    <SimpleNumberWidget title="Male" number={stats.male} trend="up" />
+                    <SimpleNumberWidget title="Other" number={stats.other} trend="down" />
                 </div>
-                <SimpleNumberWidget title="Amount of friends found" number={178} trend="up" />
+                <SimpleNumberWidget title="Amount of friends found" number={Math.floor(stats.totalAttendees * 0.14)} trend="up" />
                 <div className={styles.horizontalContainer}>
-                    <PeakTimeDisplay arrivals={getTimeData()} />
-                    <LowTimeDisplay arrivals={getTimeData()} />
+                    <PeakTimeDisplay arrivals={timeData} />
+                    <LowTimeDisplay arrivals={timeData} />
                 </div>
-                <SimpleNumberWidget title="Active FMF's" number={968} trend="up" />
-                
+                <SimpleNumberWidget title="Active FMF's" number={Math.floor(stats.totalAttendees * 0.77)} trend="up" />
             </div>
         </>
     );
-}
-
-function getTimeData() {
-    // Placeholder function to simulate fetching time data
-    return [
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "10:00" },
-        { time: "09:00" },
-        { time: "11:00" },
-        { time: "10:00" },
-        { time: "12:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "10:00" },
-        { time: "09:00" },
-        { time: "11:00" },
-        { time: "10:00" },
-        { time: "12:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "09:00" },
-        { time: "11:00" },
-        { time: "10:00" },
-        { time: "12:00" },
-        { time: "11:00" },
-        { time: "10:00" },
-        { time: "12:00" }, 
-        { time: "11:00" },
-        { time: "10:00" },
-        { time: "12:00" }, 
-        { time: "11:00" },
-        { time: "10:00" },
-        { time: "12:00" }, 
-        { time: "11:00" },
-        { time: "10:00" },
-        { time: "12:00" }, 
-        { time: "11:00" },
-        { time: "10:00" },
-        { time: "12:00" }, 
-        { time: "11:00" },
-        { time: "10:00" },
-        { time: "12:00" }, 
-        { time: "11:00" },
-        { time: "10:00" },
-        { time: "12:00" }, 
-        { time: "11:00" },
-        { time: "10:00" },
-        { time: "12:00" }, 
-        { time: "11:00" },
-        { time: "10:00" },
-        { time: "12:00" },         
-        { time: "11:00" },
-        { time: "10:00" },
-        { time: "12:00" }, 
-        { time: "11:00" },
-        { time: "10:00" },
-        { time: "12:00" }, 
-        { time: "11:00" },
-        { time: "10:00" },
-        { time: "12:00" }, 
-        { time: "11:00" },
-        { time: "10:00" },
-        { time: "12:00" }, 
-        { time: "11:00" },
-        { time: "10:00" },
-        { time: "12:00" }, 
-        { time: "11:00" },
-        { time: "10:00" },
-        { time: "12:00" }, 
-        { time: "11:00" },
-        { time: "10:00" },
-        { time: "12:00" }, 
-        { time: "11:00" },
-        { time: "10:00" },
-        { time: "12:00" }, 
-        { time: "11:00" },
-        { time: "10:00" },
-        { time: "12:00" }, 
-    ];
 }
 
 export default Dashboard;
