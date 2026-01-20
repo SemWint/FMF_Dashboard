@@ -52,6 +52,20 @@
     align-items: stretch;
     justify-content: center;
 }
+.verticalContainer {
+    flex: auto;
+    min-width: 250px;
+    max-width: 1000px;
+    background: #ffffff00;
+    border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0);
+    gap: 24px;
+    padding: 16px;
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    justify-content: center;
+}
 .centerContainer{
     display: flex;
     justify-content: center;

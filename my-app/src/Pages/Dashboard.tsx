@@ -8,8 +8,10 @@ import PeakTimeDisplay from '../Components/PeakTimeDisplay';
 import LowTimeDisplay from '../Components/LowTimeDisplay';
 import TimeRangeSlider from '../Components/TimeRangeSlider';
 import DatePickerCustom from '../Components/DatePickerCustom';
+import { useNavigate } from 'react-router-dom';
 
 function Dashboard() {
+    const navigate = useNavigate();
     const [range, setRange] = useState({ startMinutes: 8 * 60, endMinutes: 18 * 60 });
     const [locationData, setLocationData] = useState([]);
     const [date, setDate] = useState("2026-01-19");
@@ -29,7 +31,6 @@ function Dashboard() {
                 longitude: row.lng,
                 intensity: row.intensity || 0.1
                 }));
-                console.log(`Loaded ${data.length} points from CSV`);
                 setLocationData(data);
             }
             });
@@ -39,6 +40,9 @@ function Dashboard() {
 
     return (
         <>
+            <button onClick={() => navigate("/")}>
+                Go To Home Page
+            </button>
             <div className={styles.dashcontainer}>
                 <div className={styles.horizontalWidgetContainer}>
                     <a>Festival density heatmap</a>
